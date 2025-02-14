@@ -1,97 +1,83 @@
-import {
-  GreeterContract_NewGreeting_loader,
-  GreeterContract_NewGreeting_handler,
-  GreeterContract_ClearGreeting_loader,
-  GreeterContract_ClearGreeting_handler,
-} from "../generated/src/Handlers.gen";
+import { ERC20Contract } from "../generated/src/Handlers.gen";
 
-import { UserEntity } from "../generated/src/Types.gen";
+import { AccountEntity, ApprovalEntity } from "../generated/src/Types.gen";
 
-/**
-Registers a loader that loads any values from your database that your
-NewGreeting event handler might need on the Greeter contract.
-*/
-GreeterContract_NewGreeting_loader(({ event, context }) => {
-  //The id for the "User" entity derived from params of the NewGreeting event
-  const userId = event.params.user;
-  //Try load in in a "User" entity with id of the user param on the
-  //NewGreeting event
-  context.User.load(userId);
+ERC20Contract.Approval.loader(({ event, context }) => {
+  // loading the required Account entity
+  context.Account.load(event.params.owner.toString());
 });
 
-/**
-Registers a handler that handles any values from the
-NewGreeting event on the Greeter contract and index these values into
-the DB.
-*/
-GreeterContract_NewGreeting_handler(({ event, context }) => {
-  //The id for the "User" entity
-  const userId = event.params.user;
-  //The greeting string that was added.
-  const latestGreeting = event.params.greeting;
+ERC20Contract.Approval.handler(({ event, context }) => {
+  //  getting the owner Account entity
+  let ownerAccount = context.Account.get(event.params.owner.toString());
 
-  //The optional User entity that may exist already at "userId"
-  //This value would be undefined in the case that it was not loaded in the
-  //loader function above OR in the case where it never existed in the db
-  const currentUserEntity = context.User.get(userId);
+  if (ownerAccount === undefined) {
+    // Usually an account that is being approved already has/has had a balance, but it is possible they haven't.
 
-  //Construct the userEntity that is to be set in the DB
-  const userEntity: UserEntity = currentUserEntity
-    ? //In the case there is an existing "User" entity, update its
-      //latestGreeting value, increment the numberOfGreetings and append latestGreeting
-      //to the array of greetings
-      {
-        id: userId,
-        latestGreeting,
-        numberOfGreetings: currentUserEntity.numberOfGreetings + 1,
-        greetings: [...currentUserEntity.greetings, latestGreeting],
-      }
-    : //In the case where there is no User entity at this id. Construct a new one with
-      //the current latest greeting, an initial number of greetings as "1" and an initial list
-      //of greetings with only the latest greeting.
-      {
-        id: userId,
-        latestGreeting,
-        numberOfGreetings: 1,
-        greetings: [latestGreeting],
-      };
+    // create the account
+    let accountObject: AccountEntity = {
+      id: event.params.owner.toString(),
+      balance: 0n,
+    };
+    context.Account.set(accountObject);
+  }
 
-  //Set the User entity in the DB with the constructed values
-  context.User.set(userEntity);
+  let approvalId =
+    event.params.owner.toString() + "-" + event.params.spender.toString();
+
+  let approvalObject: ApprovalEntity = {
+    id: approvalId,
+    amount: event.params.value,
+    owner_id: event.params.owner.toString(),
+    spender_id: event.params.spender.toString(),
+  };
+
+  // this is the same for create or update as the amount is overwritten
+  context.Approval.set(approvalObject);
 });
 
-/**
-Registers a loader that loads any values from your database that your
-ClearGreeting event handler might need on the Greeter contract.
-*/
-GreeterContract_ClearGreeting_loader(({ event, context }) => {
-  //The id for the "User" entity derived from params of the ClearGreeting event
-  const userId = event.params.user;
-  //Try load in in a "User" entity with id of the user param on the
-  //ClearGreeting event
-  context.User.load(userId);
+ERC20Contract.Transfer.loader(({ event, context }) => {
+  context.Account.load(event.params.from.toString());
+  context.Account.load(event.params.to.toString());
 });
 
-/**
-Registers a handler that handles any values from the
-ClearGreeting event on the Greeter contract and index these values into
-the DB.
-*/
-GreeterContract_ClearGreeting_handler(({ event, context }) => {
-  //The id for the "User" entity derived from params of the ClearGreeting event
-  const userId = event.params.user;
-  //The optional User entity that may exist already at "userId"
-  //This value would be "undefined" in the case that it was not loaded in the
-  //loader function above OR in the case where it never existed in the db
-  const currentUserEntity = context.User.get(userId);
+ERC20Contract.Transfer.handler(({ event, context }) => {
+  let senderAccount = context.Account.get(event.params.from.toString());
 
-  if (currentUserEntity) {
-    //Only make any changes in the case that there is an existing User
-    //Simply clear the latestGreeting by setting it to "" (empty string)
-    //and keep all the rest of the data the same
-    context.User.set({
-      ...currentUserEntity,
-      latestGreeting: "",
-    });
+  if (senderAccount === undefined || senderAccount === null) {
+    // create the account
+    // This is likely only ever going to be the zero address in the case of the first mint
+    let accountObject: AccountEntity = {
+      id: event.params.from.toString(),
+      balance: 0n - event.params.value,
+    };
+
+    context.Account.set(accountObject);
+  } else {
+    // subtract the balance from the existing users balance
+    let accountObject: AccountEntity = {
+      id: senderAccount.id,
+      balance: senderAccount.balance - event.params.value,
+    };
+    context.Account.set(accountObject);
+  }
+
+  let receiverAccount = context.Account.get(event.params.to.toString());
+
+  if (receiverAccount === undefined || receiverAccount === null) {
+    // create new account
+    let accountObject: AccountEntity = {
+      id: event.params.to.toString(),
+      balance: event.params.value,
+    };
+    context.Account.set(accountObject);
+  } else {
+    // update existing account
+    let accountObject: AccountEntity = {
+      id: receiverAccount.id,
+      balance: receiverAccount.balance + event.params.value,
+    };
+
+    context.Account.set(accountObject);
   }
 });
